@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	timeout        = flag.Duration("timeout", 1000*time.Millisecond, "Timeout for each dial request made")
+	timeout        = flag.Duration("timeout", 2000*time.Millisecond, "Timeout for each dial request made")
 	configFilePath = flag.String("config", "config.yaml", "Path to configuration file")
 )
 
@@ -77,7 +77,10 @@ func TestEndpoints(config reachabilityConfig) {
 				defer waitGroup.Done()
 				err := ValidateReachability(host, port, tlsDisabled)
 				if err != nil {
-					failures <- err
+					err2 := ValidateReachability(host, port, tlsDisabled)
+					if err2 != nil {
+						failures <- err
+					}
 				}
 			}(e.Host, port, e.TLSDisabled, failures)
 		}
