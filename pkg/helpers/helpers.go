@@ -1,7 +1,6 @@
 package helpers
 
 import (
-	_ "embed"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -21,9 +20,6 @@ const (
 	PlatformGCPClassic    = "gcp-classic"
 	PlatformAWSHCP        = "aws-hcp"
 )
-
-//go:embed config/userdata.yaml
-var UserdataTemplate string
 
 // RandSeq generates random string with n characters.
 func RandSeq(n int) string {
