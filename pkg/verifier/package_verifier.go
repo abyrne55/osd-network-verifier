@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/openshift/osd-network-verifier/pkg/data/cpu"
 	"github.com/openshift/osd-network-verifier/pkg/output"
 	"github.com/openshift/osd-network-verifier/pkg/probes"
 	"github.com/openshift/osd-network-verifier/pkg/proxy"
@@ -37,6 +38,7 @@ type ValidateEgressInput struct {
 	ImportKeyPair                                      string
 	ForceTempSecurityGroup                             bool
 	Probe                                              probes.Probe
+	CPUArchitecture                                    cpu.Architecture
 }
 type AwsEgressConfig struct {
 	KmsKeyID          string

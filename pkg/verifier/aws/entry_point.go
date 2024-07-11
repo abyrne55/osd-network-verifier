@@ -14,14 +14,14 @@ import (
 	handledErrors "github.com/openshift/osd-network-verifier/pkg/errors"
 	"github.com/openshift/osd-network-verifier/pkg/helpers"
 	"github.com/openshift/osd-network-verifier/pkg/output"
+	"github.com/openshift/osd-network-verifier/pkg/probes/curl"
 	"github.com/openshift/osd-network-verifier/pkg/verifier"
 )
 
 const (
 	// Base path of the config file
-	CONFIG_PATH_FSTRING   = "/app/build/config/%s.yaml"
-	DEBUG_KEY_NAME        = "onv-debug-key"
-	DEFAULT_INSTANCE_TYPE = "t3.micro"
+	CONFIG_PATH_FSTRING = "/app/build/config/%s.yaml"
+	DEBUG_KEY_NAME      = "onv-debug-key"
 )
 
 // ValidateEgress performs validation process for egress
@@ -33,30 +33,48 @@ const (
 func (a *AwsVerifier) ValidateEgress(vei verifier.ValidateEgressInput) *output.Output {
 	a.writeDebugLogs(vei.Ctx, fmt.Sprintf("Using configured timeout of %s for each egress request", vei.Timeout.String()))
 
-	// Set default instance type if none is found
-	if vei.InstanceType == "" {
-		vei.InstanceType = DEFAULT_INSTANCE_TYPE
+	// Validate cloud platform type and default to AWS if necessary
+	if vei.PlatformType == "" {
+		vei.PlatformType = helpers.PlatformAWS
 	}
-
-	// Validates the provided instance type will work with the verifier
-	// NOTE a "nitro" EC2 instance type is required to be used
-	if err := a.validateInstanceType(vei.Ctx, vei.InstanceType); err != nil {
-		a.writeDebugLogs(vei.Ctx, fmt.Sprintf("Cannot use specified instance type: %s. Falling back to instance type %s", err, DEFAULT_INSTANCE_TYPE))
-
-		vei.InstanceType = DEFAULT_INSTANCE_TYPE
-	}
-
-	// Select LegacyProbe config file based on platform type
-	platformTypeStr, err := helpers.GetPlatformType(vei.PlatformType)
+	normalizedPlatformType, err := helpers.GetPlatformType(vei.PlatformType)
 	if err != nil {
-		return a.Output.AddError(err)
+		return a.Output.AddError(fmt.Errorf("cannot use platform type %s: %w", vei.PlatformType, err))
 	}
-	configPath := fmt.Sprintf(CONFIG_PATH_FSTRING, platformTypeStr)
-	if platformTypeStr == "" {
-		// Default to AWS
-		configPath = fmt.Sprintf(CONFIG_PATH_FSTRING, helpers.PlatformAWS)
+	vei.PlatformType = normalizedPlatformType
+
+	// Default to X86 if no CPUArchitecture specified
+	if vei.CPUArchitecture == "" {
+		vei.CPUArchitecture = cpu.ArchX86
 	}
-	a.Logger.Debug(vei.Ctx, fmt.Sprintf("using config file: %s", configPath))
+
+	// Validate InstanceType and use default if necessary
+	usingDefaultInstanceType := (vei.InstanceType == "")
+	if !usingDefaultInstanceType {
+		if err := a.validateInstanceType(vei.Ctx, vei.InstanceType); err != nil {
+			// Specified InstanceType is invalid (i.e., doesn't exist or doesn't use the "Nitro"
+			// hypervisor, which is necessary for collecting serial console output)
+			a.writeDebugLogs(vei.Ctx, fmt.Sprintf("cannot use instance type %s: %s", vei.InstanceType, err))
+			usingDefaultInstanceType = true
+		}
+	}
+	if usingDefaultInstanceType {
+		// Select an appropriate default instance type for the selected CPU architecture
+		vei.InstanceType, err = vei.CPUArchitecture.DefaultInstanceType(vei.PlatformType)
+		if err != nil {
+			return a.Output.AddError(err)
+		}
+		a.writeDebugLogs(vei.Ctx, fmt.Sprintf("defaulted to instance type %s", vei.InstanceType))
+	}
+
+	// Default to curl.Probe if no Probe specified
+	if vei.Probe == nil {
+		a.writeDebugLogs(vei.Ctx, "defaulted to curl probe")
+		vei.Probe = curl.Probe{}
+	}
+
+	// Select legacy probe config file based on platform type (ignored unless legacy.Probe in use)
+	configPath := fmt.Sprintf(CONFIG_PATH_FSTRING, vei.PlatformType)
 
 	var debugPubKey []byte
 	// Check if Import-keypair flag has been passed
@@ -161,8 +179,7 @@ func (a *AwsVerifier) ValidateEgress(vei verifier.ValidateEgressInput) *output.O
 
 	// Select AMI based on region if one isn't provided
 	if vei.CloudImageID == "" {
-		// TODO handle architectures other than X86
-		vei.CloudImageID, err = vei.Probe.GetMachineImageID(helpers.PlatformAWS, cpu.ArchX86, a.AwsClient.Region)
+		vei.CloudImageID, err = vei.Probe.GetMachineImageID(helpers.PlatformAWS, vei.CPUArchitecture, a.AwsClient.Region)
 		if err != nil {
 			return a.Output.AddError(err)
 		}
